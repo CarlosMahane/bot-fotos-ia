@@ -22,6 +22,13 @@ function setEstado(phone, dados) {
   estados.set(phone, { ...getEstado(phone), ...dados });
 }
 
+// Garante que o número tem 55 na frente
+function formatarPhone(phone) {
+  const limpo = phone.replace(/[^0-9]/g, "");
+  if (limpo.startsWith("55")) return limpo;
+  return "55" + limpo;
+}
+
 const SYSTEM_PROMPT = `Você é a Sofia, atendente virtual de um serviço de fotos profissionais com IA.
 
 SOBRE O SERVIÇO:
@@ -80,29 +87,40 @@ async function chamarIA(phone, mensagemCliente) {
 }
 
 async function enviarMensagem(phone, texto) {
+  const numeroFormatado = formatarPhone(phone);
+  console.log(`📤 Enviando para ${numeroFormatado}`);
   await axios.post(
     `${CONFIG.ZAPI_URL}/${CONFIG.ZAPI_INSTANCE}/token/${CONFIG.ZAPI_TOKEN}/send-text`,
-    { phone, message: texto },
+    { phone: numeroFormatado, message: texto },
     { headers: { "Content-Type": "application/json" } }
   );
 }
 
 async function alertarHumano(phone, nome, motivo) {
   const msg = `🚨 *ATENÇÃO — Cliente precisa de você*\n\n👤 ${nome || phone}\n📱 ${phone}\n📌 ${motivo}\n\nAssuma o atendimento! 💜`;
-  try { await enviarMensagem(CONFIG.NUMERO_HUMANO, msg); } catch (e) {}
+  try { await enviarMensagem(CONFIG.NUMERO_HUMANO, msg); } catch (e) {
+    console.log("Erro ao alertar humano:", e.message);
+  }
 }
 
 app.post("/webhook", async (req, res) => {
   res.sendStatus(200);
   try {
     const body = req.body;
+    
+    console.log("📨 Webhook recebido:", JSON.stringify(body).substring(0, 200));
+
     if (body?.fromMe) return;
 
     const phone = body?.phone?.replace(/[^0-9]/g, "") || "";
     const mensagem = body?.text?.message || body?.message || "";
     const nome = body?.senderName || "";
 
-    if (!phone || !mensagem) return;
+    if (!phone || !mensagem) {
+      console.log("⚠️ Phone ou mensagem vazio, ignorando");
+      return;
+    }
+
     console.log(`📩 [${phone}] ${nome}: ${mensagem}`);
     if (nome) setEstado(phone, { nome });
 
@@ -136,9 +154,10 @@ app.post("/webhook", async (req, res) => {
     }
 
     await enviarMensagem(phone, resposta);
-    console.log(`✅ [${phone}] OK`);
+    console.log(`✅ [${phone}] Resposta enviada com sucesso`);
+
   } catch (err) {
-    console.error("Erro:", err.message);
+    console.error("Erro:", err.response?.data || err.message);
   }
 });
 
