@@ -92,7 +92,7 @@ async function enviarMensagem(phone, texto) {
   await axios.post(
     `${CONFIG.ZAPI_URL}/${CONFIG.ZAPI_INSTANCE}/token/${CONFIG.ZAPI_TOKEN}/send-text`,
     { phone: numeroFormatado, message: texto },
-    { headers: { "Content-Type": "application/json", "Client-Token": CONFIG.ZAPI_TOKEN } }
+    { headers: { "Content-Type": "application/json" } }
   );
 }
 
