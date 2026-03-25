@@ -4,76 +4,86 @@ const app = express();
 app.use(express.json());
 
 const CONFIG = {
-  ZAPI_INSTANCE: process.env.ZAPI_INSTANCE || "3F09E66329E771C9D7640E66E5C344E0",
-  ZAPI_TOKEN: process.env.ZAPI_TOKEN || "832B64C2628C0BAA5C90DC0E",
+  ZAPI_INSTANCE: process.env.ZAPI_INSTANCE,
+  ZAPI_TOKEN: process.env.ZAPI_TOKEN,
+  CLIENT_TOKEN: process.env.CLIENT_TOKEN,
   ZAPI_URL: "https://api.z-api.io/instances",
-  ANTHROPIC_KEY: process.env.ANTHROPIC_KEY || "SUA_CHAVE_ANTHROPIC",
-  PIX_KEY: process.env.PIX_KEY || "SUA_CHAVE_PIX",
-  NUMERO_HUMANO: process.env.NUMERO_HUMANO || "5585999999999",
+  ANTHROPIC_KEY: process.env.ANTHROPIC_KEY,
+  PIX_KEY: process.env.PIX_KEY,
+  NUMERO_HUMANO: process.env.NUMERO_HUMANO,
 };
 
 const estados = new Map();
 
 function getEstado(phone) {
-  return estados.get(phone) || { etapa: "novo", nome: "", ocasiao: "" };
+  return estados.get(phone) || { etapa: "novo", nome: "", historico: [] };
 }
 
 function setEstado(phone, dados) {
   estados.set(phone, { ...getEstado(phone), ...dados });
 }
 
-// Garante que o número tem 55 na frente
+function adicionarHistorico(phone, role, content) {
+  const estado = getEstado(phone);
+  const historico = estado.historico || [];
+  historico.push({ role, content });
+  if (historico.length > 20) historico.splice(0, historico.length - 20);
+  setEstado(phone, { historico });
+}
+
 function formatarPhone(phone) {
   const limpo = phone.replace(/[^0-9]/g, "");
   if (limpo.startsWith("55")) return limpo;
   return "55" + limpo;
 }
 
-const SYSTEM_PROMPT = `Você é a Sofia, atendente virtual de um serviço de fotos profissionais com IA.
-
-SOBRE O SERVIÇO:
-- Fazemos fotos profissionais usando inteligência artificial
-- O cliente nos envia fotos simples e nós transformamos em fotos profissionais incríveis
-- Entrega em até 3 dias úteis
+const SYSTEM_PROMPT = `Você é a Sofia, atendente de um serviço de fotos profissionais com IA. Você fala pelo WhatsApp.
 
 PACOTES:
 - STARTER: R$ 29,90 → 3 fotos, 1 cenário
-- POPULAR: R$ 49,90 → 7 fotos, 3 cenários (MAIS VENDIDO ⭐)
-- PREMIUM: R$ 89,90 → 15 fotos, 5 cenários + retoque especial
-- CASAL: R$ 99,90 → 10 fotos, 3 cenários (para casais)
+- POPULAR: R$ 49,90 → 7 fotos, 3 cenários (MAIS VENDIDO)
+- PREMIUM: R$ 89,90 → 15 fotos, 5 cenários + retoque
+- CASAL: R$ 99,90 → 10 fotos, 3 cenários
 
-CENÁRIOS: LinkedIn/Profissional, Formatura, Aniversário, Casual, Natureza, Urbano, Estúdio clean, Natal, Casal e outros
+COMO VOCÊ ESCREVE:
+- Curto. Máximo 2 linhas por mensagem. Sem parágrafos longos.
+- Tom informal, como uma amiga atendendo no zap
+- Varie sempre as respostas — nunca repita a mesma abertura
+- Reaja primeiro ao que o cliente disse antes de responder (ex: "Que legal!", "Entendi!", "Boa escolha!")
+- Use emojis com moderação — só quando fizer sentido, não em toda mensagem
+- Nunca liste tudo de uma vez. Apresente as opções de forma conversacional
+- Se o cliente hesitar, seja acolhedora — não pressione, convença com leveza
 
-COMO FUNCIONA:
-1. Cliente escolhe o pacote e paga via Pix
-2. Nos envia de 5 a 10 fotos com boa iluminação
-3. Processamos com IA
-4. Em até 3 dias recebe as fotos
+REGRAS DE VENDA:
+- Sempre direcione pro POPULAR como primeira sugestão
+- "tá caro": compare com fotógrafo físico (R$300+ por ensaio)
+- "vou pensar": crie urgência gentil, sem pressionar
+- Situação complexa ou reclamação: "Deixa eu chamar minha colega! 💜"
+- NUNCA confirme pagamento (só humano confirma)
+- NUNCA envie link de entrega (só humano envia)
 
-REGRAS:
-- Seja calorosa, empática, use emojis com moderação
-- Sempre direcione para o pacote POPULAR
-- Objeção "tá caro": compare com fotógrafo real (R$ 300+), sugira Starter
-- Objeção "vou pensar": crie urgência gentil
-- Objeção "funciona mesmo?": diga que vai mandar exemplos
-- Se situação complexa: diga "Deixa eu chamar minha colega pra te ajudar melhor! Um momento 💜"
-- NUNCA confirme pagamento (só o humano confirma)
-- NUNCA envie link de entrega (só o humano envia)
+PIX: ${CONFIG.PIX_KEY}
 
-PIX: ${CONFIG.PIX_KEY}`;
+EXEMPLOS DO SEU ESTILO:
+Cliente: "oi, quero saber sobre as fotos"
+Sofia: "Oi! Que bom que chegou aqui 😊 Você quer as fotos pra alguma ocasião especial ou uso profissional?"
+
+Cliente: "quanto custa?"
+Sofia: "Temos opções a partir de R$ 29,90! Mas o mais pedido é o Popular — 7 fotos em 3 cenários por R$ 49,90. Quer ver como fica?"
+
+Cliente: "tá caro"
+Sofia: "Entendo! Mas pensa: um fotógrafo físico cobra R$300+ por ensaio. Aqui você tem fotos profissionais por R$ 49,90 no conforto de casa 😉"`;
 
 async function chamarIA(phone, mensagemCliente) {
-  const estado = getEstado(phone);
+  adicionarHistorico(phone, "user", mensagemCliente);
+
   const response = await axios.post(
     "https://api.anthropic.com/v1/messages",
     {
       model: "claude-sonnet-4-20250514",
-      max_tokens: 1000,
+      max_tokens: 200,
       system: SYSTEM_PROMPT,
-      messages: [{
-        role: "user",
-        content: `Etapa: ${estado.etapa} | Nome: ${estado.nome || "?"} | Mensagem: ${mensagemCliente}`
-      }],
+      messages: getEstado(phone).historico,
     },
     {
       headers: {
@@ -83,51 +93,53 @@ async function chamarIA(phone, mensagemCliente) {
       },
     }
   );
-  return response.data.content[0].text;
+
+  const resposta = response.data.content[0].text;
+  adicionarHistorico(phone, "assistant", resposta);
+  return resposta;
 }
 
 async function enviarMensagem(phone, texto) {
-  const numeroFormatado = formatarPhone(phone);
-  console.log(`📤 Enviando para ${numeroFormatado}`);
+  const num = formatarPhone(phone);
   await axios.post(
     `${CONFIG.ZAPI_URL}/${CONFIG.ZAPI_INSTANCE}/token/${CONFIG.ZAPI_TOKEN}/send-text`,
-    { phone: numeroFormatado, message: texto },
-    { headers: { "Content-Type": "application/json", "Client-Token": process.env.CLIENT_TOKEN } }
+    { phone: num, message: texto },
+    {
+      headers: {
+        "Content-Type": "application/json",
+        "Client-Token": CONFIG.CLIENT_TOKEN,
+      },
+    }
   );
 }
 
 async function alertarHumano(phone, nome, motivo) {
-  const msg = `🚨 *ATENÇÃO — Cliente precisa de você*\n\n👤 ${nome || phone}\n📱 ${phone}\n📌 ${motivo}\n\nAssuma o atendimento! 💜`;
-  try { await enviarMensagem(CONFIG.NUMERO_HUMANO, msg); } catch (e) {
-    console.log("Erro ao alertar humano:", e.message);
-  }
+  const msg = `🚨 ATENÇÃO\n👤 ${nome}\n📱 ${phone}\n📌 ${motivo}`;
+  try { await enviarMensagem(CONFIG.NUMERO_HUMANO, msg); }
+  catch (e) { console.log("Erro ao alertar humano:", e.message); }
 }
 
 app.post("/webhook", async (req, res) => {
   res.sendStatus(200);
+
   try {
     const body = req.body;
-    
-    console.log("📨 Webhook recebido:", JSON.stringify(body).substring(0, 200));
-
     if (body?.fromMe) return;
 
     const phone = body?.phone?.replace(/[^0-9]/g, "") || "";
     const mensagem = body?.text?.message || body?.message || "";
     const nome = body?.senderName || "";
 
-    if (!phone || !mensagem) {
-      console.log("⚠️ Phone ou mensagem vazio, ignorando");
-      return;
-    }
+    if (!phone || !mensagem) return;
 
     console.log(`📩 [${phone}] ${nome}: ${mensagem}`);
+
     if (nome) setEstado(phone, { nome });
 
-    const gatilhos = ["gerente","responsável","falar com pessoa","atendente","humano","reclamação","reembolso","devolução"];
-    if (gatilhos.some(g => mensagem.toLowerCase().includes(g))) {
-      await enviarMensagem(phone, "Deixa eu chamar minha colega! Um momentinho 💜");
-      await alertarHumano(phone, nome, `Cliente pediu: "${mensagem}"`);
+    const gatilhos = ["gerente", "responsável", "atendente", "humano", "reclamação", "reembolso", "devolução"];
+    if (gatilhos.some((g) => mensagem.toLowerCase().includes(g))) {
+      await enviarMensagem(phone, "Deixa eu chamar minha colega! 💜");
+      await alertarHumano(phone, nome, `Pediu: "${mensagem}"`);
       setEstado(phone, { etapa: "humano" });
       return;
     }
@@ -135,26 +147,29 @@ app.post("/webhook", async (req, res) => {
     const estado = getEstado(phone);
     if (estado.etapa === "humano") return;
 
-    if (estado.etapa === "aguardando_pagamento" &&
-      ["paguei","fiz o pix","transferi","comprovante"].some(p => mensagem.toLowerCase().includes(p))) {
-      await enviarMensagem(phone, "Recebi! Confirmando o pagamento agora ⏳");
-      await alertarHumano(phone, nome, "Cliente disse que pagou — confirme!");
+    const palavrasPagamento = ["paguei", "fiz o pix", "transferi", "comprovante", "mandei o pix"];
+    if (
+      estado.etapa === "aguardando_pagamento" &&
+      palavrasPagamento.some((p) => mensagem.toLowerCase().includes(p))
+    ) {
+      await enviarMensagem(phone, "Recebi! Confirmando agora ⏳");
+      await alertarHumano(phone, nome, "Cliente disse que pagou!");
       return;
     }
 
     const resposta = await chamarIA(phone, mensagem);
 
     if (resposta.toLowerCase().includes("chamar minha colega")) {
-      await alertarHumano(phone, nome, "IA identificou situação complexa");
+      await alertarHumano(phone, nome, "Situação complexa identificada pela IA");
       setEstado(phone, { etapa: "humano" });
     }
 
-    if (resposta.includes(CONFIG.PIX_KEY)) {
+    if (CONFIG.PIX_KEY && resposta.includes(CONFIG.PIX_KEY)) {
       setEstado(phone, { etapa: "aguardando_pagamento" });
     }
 
     await enviarMensagem(phone, resposta);
-    console.log(`✅ [${phone}] Resposta enviada com sucesso`);
+    console.log(`✅ [${phone}] Resposta enviada`);
 
   } catch (err) {
     console.error("Erro:", err.response?.data || err.message);
@@ -164,7 +179,8 @@ app.post("/webhook", async (req, res) => {
 app.post("/reativar-bot", (req, res) => {
   const { phone } = req.body;
   if (!phone) return res.status(400).json({ erro: "phone obrigatório" });
-  setEstado(phone, { etapa: "novo" });
+  setEstado(phone, { etapa: "novo", historico: [] });
+  console.log(`🔄 Bot reativado para ${phone}`);
   res.json({ ok: true });
 });
 
